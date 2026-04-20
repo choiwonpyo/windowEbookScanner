@@ -194,9 +194,20 @@ class CaptureApp:
         # 영역 선택
         f = ttk.LabelFrame(parent, text="캡처 영역")
         f.pack(fill=tk.X, padx=10, pady=5)
-        self.region_label = tk.StringVar(value="영역이 선택되지 않았습니다")
-        ttk.Label(f, textvariable=self.region_label).pack(side=tk.LEFT, padx=10, pady=5)
-        ttk.Button(f, text="영역 선택", command=self._select_region).pack(side=tk.RIGHT, padx=10, pady=5)
+        ttk.Label(f, text="X:").grid(row=0, column=0, padx=(10, 2), pady=6)
+        self.region_x_var = tk.StringVar(value="")
+        ttk.Entry(f, textvariable=self.region_x_var, width=6).grid(row=0, column=1, padx=2)
+        ttk.Label(f, text="Y:").grid(row=0, column=2, padx=(8, 2))
+        self.region_y_var = tk.StringVar(value="")
+        ttk.Entry(f, textvariable=self.region_y_var, width=6).grid(row=0, column=3, padx=2)
+        ttk.Label(f, text="너비:").grid(row=0, column=4, padx=(8, 2))
+        self.region_w_var = tk.StringVar(value="")
+        ttk.Entry(f, textvariable=self.region_w_var, width=6).grid(row=0, column=5, padx=2)
+        ttk.Label(f, text="높이:").grid(row=0, column=6, padx=(8, 2))
+        self.region_h_var = tk.StringVar(value="")
+        ttk.Entry(f, textvariable=self.region_h_var, width=6).grid(row=0, column=7, padx=2)
+        ttk.Button(f, text="드래그 선택", command=self._select_region).grid(row=0, column=8, padx=(12, 4))
+        ttk.Button(f, text="미리보기", command=self._preview_region).grid(row=0, column=9, padx=4)
 
         # 단축키 안내
         f = ttk.LabelFrame(parent, text="단축키")
@@ -304,11 +315,40 @@ class CaptureApp:
         self.root.deiconify()
         if region:
             self.region = region
-            self.region_label.set(
-                f"X:{region['left']}  Y:{region['top']}  크기:{region['width']}×{region['height']}"
-            )
-        else:
-            self.region_label.set("취소됨")
+            self.region_x_var.set(str(region["left"]))
+            self.region_y_var.set(str(region["top"]))
+            self.region_w_var.set(str(region["width"]))
+            self.region_h_var.set(str(region["height"]))
+
+    def _apply_region_from_fields(self) -> bool:
+        try:
+            x = int(self.region_x_var.get())
+            y = int(self.region_y_var.get())
+            w = int(self.region_w_var.get())
+            h = int(self.region_h_var.get())
+            if w > 0 and h > 0:
+                self.region = {"left": x, "top": y, "width": w, "height": h}
+                return True
+        except ValueError:
+            pass
+        return False
+
+    def _preview_region(self):
+        if not self._apply_region_from_fields():
+            messagebox.showwarning("알림", "유효한 영역 수치를 입력하세요.")
+            return
+        r = self.region
+        overlay = tk.Toplevel(self.root)
+        overlay.overrideredirect(True)
+        overlay.attributes("-topmost", True)
+        overlay.attributes("-transparentcolor", "black")
+        overlay.geometry(f"{r['width']}x{r['height']}+{r['left']}+{r['top']}")
+        canvas = tk.Canvas(overlay, width=r["width"], height=r["height"],
+                           bg="black", highlightthickness=0)
+        canvas.pack()
+        canvas.create_rectangle(1, 1, r["width"] - 1, r["height"] - 1,
+                                 outline="red", width=4)
+        overlay.after(2000, overlay.destroy)
 
     def _apply_settings(self):
         self.save_dir = self.dir_var.get()
@@ -657,6 +697,7 @@ class CaptureApp:
     # ── 수동 모드 ──────────────────────────────────────────────────────────────
 
     def _start_manual(self):
+        self._apply_region_from_fields()
         if not self.region:
             messagebox.showwarning("알림", "먼저 캡처 영역을 선택하세요.")
             return
@@ -679,6 +720,7 @@ class CaptureApp:
     # ── 자동 모드 ──────────────────────────────────────────────────────────────
 
     def _start_auto(self):
+        self._apply_region_from_fields()
         if not self.region:
             messagebox.showwarning("알림", "먼저 캡처 영역을 선택하세요.")
             return
@@ -929,10 +971,8 @@ if __name__ == "__main__":
         ctypes.windll.user32.SetProcessDPIAware()
     if not ctypes.windll.shell32.IsUserAnAdmin():
         if getattr(sys, "frozen", False):
-            # PyInstaller exe: sys.executable 자체가 exe
             params = None
         else:
-            # python capture.py: 스크립트 경로를 인자로 전달
             params = f'"{os.path.abspath(sys.argv[0])}"'
             if len(sys.argv) > 1:
                 params += " " + " ".join(sys.argv[1:])
