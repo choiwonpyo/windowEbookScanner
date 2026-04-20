@@ -1,0 +1,6 @@
+Pillow
+keyboard
+numpy
+dxcam
+opencv-python
+img2pdf
