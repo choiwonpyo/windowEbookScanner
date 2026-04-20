@@ -78,7 +78,8 @@ class RegionSelector:
 class CaptureApp:
     def __init__(self):
         self.region = None
-        self.click_pos = None   # 페이지 넘김 클릭 위치 (절대 화면 좌표)
+        self.click_pos = None
+        self.target_hwnd = None
         self.save_dir = os.path.join(os.path.expanduser("~"), "Pictures", "ebook_capture")
         self.counter = 1
         self.capture_count = 0
@@ -97,7 +98,8 @@ class CaptureApp:
 
     def _build_ui(self):
         self.root = tk.Tk()
-        self.root.title("Ebook 캡처 도구")
+        is_admin = ctypes.windll.shell32.IsUserAnAdmin()
+        self.root.title(f"Ebook 캡처 도구 {'[관리자]' if is_admin else '[권한 없음]'}")
         self.root.resizable(False, False)
 
         notebook = ttk.Notebook(self.root)
@@ -159,22 +161,35 @@ class CaptureApp:
         ttk.Entry(f, textvariable=self.pre_delay_var, width=5).grid(row=0, column=11, **pad)
         ttk.Label(f, text="초").grid(row=0, column=12)
 
-        # 페이지 넘김 클릭 위치 + 총 페이지 + 최소화 (2번째 행)
-        self.click_label = tk.StringVar(value="클릭 위치 미지정")
+        # [1단계] 대상 창 선택 (row 1)
+        self.window_label = tk.StringVar(value="대상 창: 미선택")
+        ttk.Label(f, textvariable=self.window_label, foreground="gray").grid(
+            row=1, column=0, columnspan=5, **pad, sticky="w"
+        )
+        self.pick_window_btn = ttk.Button(
+            f, text="① 대상 창 선택 (3초 후)", command=self._pick_target_window
+        )
+        self.pick_window_btn.grid(row=1, column=5, columnspan=3, **pad, sticky="w")
+
+        # [2단계] 클릭 위치 지정 (row 2)
+        self.click_label = tk.StringVar(value="클릭 위치: 미지정")
         ttk.Label(f, textvariable=self.click_label, foreground="gray").grid(
-            row=1, column=0, columnspan=3, **pad, sticky="w"
+            row=2, column=0, columnspan=5, **pad, sticky="w"
         )
-        ttk.Button(f, text="클릭 위치 지정 (3초 후)", command=self._pick_click_pos).grid(
-            row=1, column=3, columnspan=3, **pad, sticky="w"
+        self.pick_click_btn = ttk.Button(
+            f, text="② 클릭 위치 지정 (3초 후)", command=self._pick_click_pos, state=tk.DISABLED
         )
-        ttk.Label(f, text="총 페이지:").grid(row=1, column=6, **pad)
+        self.pick_click_btn.grid(row=2, column=5, columnspan=3, **pad, sticky="w")
+
+        # 총 페이지 + 최소화 (row 3)
+        ttk.Label(f, text="총 페이지:").grid(row=3, column=0, **pad)
         self.total_pages_var = tk.StringVar(value="0")
-        ttk.Entry(f, textvariable=self.total_pages_var, width=5).grid(row=1, column=7, **pad)
-        ttk.Label(f, text="(0=무한)").grid(row=1, column=8)
+        ttk.Entry(f, textvariable=self.total_pages_var, width=5).grid(row=3, column=1, **pad)
+        ttk.Label(f, text="(0=무한)").grid(row=3, column=2)
         self.minimize_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             f, text="자동 시작 시 창 최소화", variable=self.minimize_var
-        ).grid(row=1, column=9, columnspan=3, sticky="w", **pad)
+        ).grid(row=3, column=3, columnspan=4, sticky="w", **pad)
 
         # 영역 선택
         f = ttk.LabelFrame(parent, text="캡처 영역")
@@ -321,10 +336,37 @@ class CaptureApp:
         self.stop_btn.config(state=tk.DISABLED)
         self.pause_btn.config(state=tk.DISABLED)
 
-    # ── 클릭 위치 선택 ────────────────────────────────────────────────────────
+    # ── 대상 창 / 클릭 위치 선택 ──────────────────────────────────────────────
+
+    def _get_window_title(self, hwnd) -> str:
+        buf = ctypes.create_unicode_buffer(256)
+        ctypes.windll.user32.GetWindowTextW(hwnd, buf, 256)
+        return buf.value or f"(hwnd={hwnd})"
+
+    def _pick_target_window(self):
+        self.pick_window_btn.config(state=tk.DISABLED)
+        self.window_label.set("3... 대상 앱 위로 마우스를 이동하세요")
+        self.root.after(1000, lambda: self.window_label.set("2..."))
+        self.root.after(2000, lambda: self.window_label.set("1..."))
+        self.root.after(3000, self._do_pick_target_window)
+
+    def _do_pick_target_window(self):
+        pt = ctypes.wintypes.POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+        hwnd = ctypes.windll.user32.WindowFromPoint(pt)
+        self.target_hwnd = ctypes.windll.user32.GetAncestor(hwnd, 2)
+        title = self._get_window_title(self.target_hwnd)
+        self.window_label.set(f"대상 창: [{title}]  (hwnd={self.target_hwnd})")
+        self.pick_window_btn.config(state=tk.NORMAL)
+        # 창이 선택됐으면 클릭 위치 지정 버튼 활성화
+        self.pick_click_btn.config(state=tk.NORMAL)
 
     def _pick_click_pos(self):
-        self.click_label.set("3... 다음 페이지 버튼/영역 위로 마우스를 이동하세요")
+        if not hasattr(self, "target_hwnd") or not self.target_hwnd:
+            messagebox.showwarning("알림", "먼저 ① 대상 창을 선택하세요.")
+            return
+        self.pick_click_btn.config(state=tk.DISABLED)
+        self.click_label.set("3... 다음 페이지 버튼 위로 마우스를 이동하세요")
         self.root.after(1000, lambda: self.click_label.set("2..."))
         self.root.after(2000, lambda: self.click_label.set("1..."))
         self.root.after(3000, self._do_pick_click_pos)
@@ -333,10 +375,8 @@ class CaptureApp:
         pt = ctypes.wintypes.POINT()
         ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
         self.click_pos = (pt.x, pt.y)
-        # 커서 아래 창의 최상위 부모 hwnd 저장 (클릭 전 포커스용)
-        hwnd = ctypes.windll.user32.WindowFromPoint(pt)
-        self.target_hwnd = ctypes.windll.user32.GetAncestor(hwnd, 2)
         self.click_label.set(f"클릭 위치: ({pt.x}, {pt.y})")
+        self.pick_click_btn.config(state=tk.NORMAL)
 
     def _real_click(self, abs_x, abs_y):
         ctypes.windll.user32.SetCursorPos(int(abs_x), int(abs_y))
@@ -352,7 +392,7 @@ class CaptureApp:
             return
         try:
             # 캡처 전 ebook 창을 앞으로
-            if hasattr(self, "target_hwnd") and self.target_hwnd:
+            if self.target_hwnd:
                 ctypes.windll.user32.SetForegroundWindow(self.target_hwnd)
                 time.sleep(0.1)
             filename = f"{self.prefix}_{self.counter:04d}.{self.fmt}"
@@ -363,9 +403,7 @@ class CaptureApp:
             self.capture_count += 1
             self.root.after(0, self._update_status, filename)
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self.root.after(0, self.status_var.set, f"캡처 오류: {e}")
+            self.root.after(0, messagebox.showerror, "캡처 오류", str(e))
 
     def _grab_region(self, region: dict) -> Image.Image:
         import dxcam
@@ -691,7 +729,7 @@ class CaptureApp:
 
                 # 페이지 넘김 클릭 전 ebook 창을 앞으로
                 if self.click_pos:
-                    if hasattr(self, "target_hwnd") and self.target_hwnd:
+                    if self.target_hwnd:
                         ctypes.windll.user32.SetForegroundWindow(self.target_hwnd)
                         time.sleep(0.15)
                     self._real_click(*self.click_pos)
@@ -880,14 +918,25 @@ class CaptureApp:
         self.root.destroy()
 
     def run(self):
-        if not ctypes.windll.shell32.IsUserAnAdmin():
-            messagebox.showwarning(
-                "관리자 권한 필요",
-                "교보문고 등 보안 앱의 페이지 넘김(클릭)을 위해\n관리자 권한으로 실행하세요.\n\n스크린샷만 사용할 경우 무시해도 됩니다.",
-            )
         self.root.mainloop()
 
 
 if __name__ == "__main__":
+    import sys
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PER_MONITOR_DPI_AWARE
+    except Exception:
+        ctypes.windll.user32.SetProcessDPIAware()
+    if not ctypes.windll.shell32.IsUserAnAdmin():
+        if getattr(sys, "frozen", False):
+            # PyInstaller exe: sys.executable 자체가 exe
+            params = None
+        else:
+            # python capture.py: 스크립트 경로를 인자로 전달
+            params = f'"{os.path.abspath(sys.argv[0])}"'
+            if len(sys.argv) > 1:
+                params += " " + " ".join(sys.argv[1:])
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+        sys.exit()
     app = CaptureApp()
     app.run()
