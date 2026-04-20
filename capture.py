@@ -157,24 +157,24 @@ class CaptureApp:
         ttk.Label(f, text="캡처 전 대기:").grid(row=0, column=10, **pad)
         self.pre_delay_var = tk.StringVar(value="1.0")
         ttk.Entry(f, textvariable=self.pre_delay_var, width=5).grid(row=0, column=11, **pad)
-        ttk.Label(f, text="초  |").grid(row=0, column=12)
-        ttk.Label(f, text="총 페이지:").grid(row=0, column=13, **pad)
-        self.total_pages_var = tk.StringVar(value="0")
-        ttk.Entry(f, textvariable=self.total_pages_var, width=5).grid(row=0, column=14, **pad)
-        ttk.Label(f, text="(0=무한)").grid(row=0, column=15)
+        ttk.Label(f, text="초").grid(row=0, column=12)
 
-        # 페이지 넘김 클릭 위치 (2번째 행)
+        # 페이지 넘김 클릭 위치 + 총 페이지 + 최소화 (2번째 행)
         self.click_label = tk.StringVar(value="클릭 위치 미지정")
         ttk.Label(f, textvariable=self.click_label, foreground="gray").grid(
-            row=1, column=0, columnspan=8, **pad, sticky="w"
+            row=1, column=0, columnspan=3, **pad, sticky="w"
         )
         ttk.Button(f, text="클릭 위치 지정 (3초 후)", command=self._pick_click_pos).grid(
-            row=1, column=8, columnspan=3, **pad, sticky="w"
+            row=1, column=3, columnspan=3, **pad, sticky="w"
         )
+        ttk.Label(f, text="총 페이지:").grid(row=1, column=6, **pad)
+        self.total_pages_var = tk.StringVar(value="0")
+        ttk.Entry(f, textvariable=self.total_pages_var, width=5).grid(row=1, column=7, **pad)
+        ttk.Label(f, text="(0=무한)").grid(row=1, column=8)
         self.minimize_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             f, text="자동 시작 시 창 최소화", variable=self.minimize_var
-        ).grid(row=1, column=11, columnspan=2, sticky="w", **pad)
+        ).grid(row=1, column=9, columnspan=3, sticky="w", **pad)
 
         # 영역 선택
         f = ttk.LabelFrame(parent, text="캡처 영역")
@@ -333,6 +333,9 @@ class CaptureApp:
         pt = ctypes.wintypes.POINT()
         ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
         self.click_pos = (pt.x, pt.y)
+        # 커서 아래 창의 최상위 부모 hwnd 저장 (클릭 전 포커스용)
+        hwnd = ctypes.windll.user32.WindowFromPoint(pt)
+        self.target_hwnd = ctypes.windll.user32.GetAncestor(hwnd, 2)
         self.click_label.set(f"클릭 위치: ({pt.x}, {pt.y})")
 
     def _real_click(self, abs_x, abs_y):
@@ -348,6 +351,10 @@ class CaptureApp:
         if not self.running:
             return
         try:
+            # 캡처 전 ebook 창을 앞으로
+            if hasattr(self, "target_hwnd") and self.target_hwnd:
+                ctypes.windll.user32.SetForegroundWindow(self.target_hwnd)
+                time.sleep(0.1)
             filename = f"{self.prefix}_{self.counter:04d}.{self.fmt}"
             filepath = os.path.join(self.save_dir, filename)
             img = self._grab_region(self.region)
@@ -682,8 +689,11 @@ class CaptureApp:
                 if self._auto_stop_event.is_set():
                     break
 
-                # 페이지 넘김 클릭
+                # 페이지 넘김 클릭 전 ebook 창을 앞으로
                 if self.click_pos:
+                    if hasattr(self, "target_hwnd") and self.target_hwnd:
+                        ctypes.windll.user32.SetForegroundWindow(self.target_hwnd)
+                        time.sleep(0.15)
                     self._real_click(*self.click_pos)
 
                 # 페이지 로딩 대기
